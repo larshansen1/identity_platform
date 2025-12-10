@@ -1,108 +1,90 @@
-# Makefile for Python Quality Framework
+# Makefile for Identity Platform
 
-PYTHON ?= python3
-PIP ?= $(PYTHON) -m pip
+BACKEND_DIR := backend
+PYTHON := python3
+PIP := $(PYTHON) -m pip
 
-# Default target
 .DEFAULT_GOAL := help
 
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  install        Install project dependencies"
-	@echo "  dev            Install dev dependencies (if using requirements-dev.txt)"
+	@echo "  install        Install backend dependencies (requires venv)"
+	@echo "  dev-install    Install backend dev dependencies"
 	@echo "  lint           Run Ruff linting"
 	@echo "  format         Run Ruff formatter"
-	@echo "  typecheck      Run mypy type checking"
 	@echo "  test           Run pytest"
-	@echo "  coverage       Run tests with coverage and show report"
+	@echo "  typecheck      Run mypy"
+	@echo "  coverage       Run tests with coverage"
 	@echo "  radon          Run radon complexity checks"
-	@echo "  bandit         Run bandit security checks"
-	@echo "  quality        Run lint, typecheck, radon, bandit, and tests"
-	@echo "  check          Alias for 'quality'"
-	@echo "  pre-commit     Run pre-commit on all files"
-	@echo "  hooks          Install pre-commit git hooks"
-	@echo "  ci             Run CI-style pipeline locally"
-
+	@echo "  vulture        Run vulture dead code analysis"
+	@echo "  up             Start services with Podman Compose"
+	@echo "  down           Stop services"
+	@echo "  logs           View logs"
+	@echo "  db-shell       Access PostgreSQL shell"
 
 # ----------------------------
-# Installation
+# Development
 # ----------------------------
 
 .PHONY: install
 install:
-	$(PIP) install -r requirements.txt
+	cd $(BACKEND_DIR) && $(PIP) install .
 
-.PHONY: dev
-dev:
-	@if [ -f requirements-dev.txt ]; then \
-	  $(PIP) install -r requirements-dev.txt; \
-	else \
-	  echo "requirements-dev.txt not found, skipping dev install"; \
-	fi
-
-
-# ----------------------------
-# Quality Checks (wrapped scripts)
-# ----------------------------
+.PHONY: dev-install
+dev-install:
+	cd $(BACKEND_DIR) && $(PIP) install -e ".[dev]"
 
 .PHONY: lint
 lint:
-	./scripts/lint.sh
-
-.PHONY: typecheck
-typecheck:
-	./scripts/typecheck.sh
-
-.PHONY: radon
-radon:
-	./scripts/run_radon.sh
-
-.PHONY: test
-test:
-	./scripts/test.sh
-
-.PHONY: coverage
-coverage:
-	PYTHONPATH=. coverage run -m pytest
-	coverage report
-
-
-# ----------------------------
-# Security & Formatting
-# ----------------------------
-
-.PHONY: bandit
-bandit:
-	bandit -q -r app
+	cd $(BACKEND_DIR) && ruff check .
 
 .PHONY: format
 format:
-	ruff format .
+	cd $(BACKEND_DIR) && ruff format .
 
+.PHONY: test
+test:
+	cd $(BACKEND_DIR) && pytest
+
+.PHONY: typecheck
+typecheck:
+	cd $(BACKEND_DIR) && mypy src
+
+.PHONY: coverage
+coverage:
+	cd $(BACKEND_DIR) && pytest --cov=src --cov-report=term-missing
+
+.PHONY: radon
+radon:
+	cd $(BACKEND_DIR) && radon cc src -a -nb
+	cd $(BACKEND_DIR) && radon mi src
+
+.PHONY: vulture
+vulture:
+	cd $(BACKEND_DIR) && vulture src .vulture_whitelist.py
+
+.PHONY: lock
+lock:
+	cd $(BACKEND_DIR) && pip-compile -o requirements.txt pyproject.toml
+	cd $(BACKEND_DIR) && pip-compile --extra dev -o requirements-dev.txt pyproject.toml
 
 # ----------------------------
-# Aggregated Gates
+# Podman Compose
 # ----------------------------
 
-.PHONY: quality
-quality: lint typecheck radon bandit test
+.PHONY: up
+up:
+	podman-compose up -d
 
-.PHONY: check
-check: quality
+.PHONY: down
+down:
+	podman-compose down
 
-.PHONY: ci
-ci: quality coverage
+.PHONY: logs
+logs:
+	podman-compose logs -f
 
-
-# ----------------------------
-# Pre-commit
-# ----------------------------
-
-.PHONY: pre-commit
-pre-commit:
-	pre-commit run --all-files
-
-.PHONY: hooks
-hooks:
-	pre-commit install
+.PHONY: db-shell
+db-shell:
+	podman-compose exec db psql -U postgres -d identity_platform

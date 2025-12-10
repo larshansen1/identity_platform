@@ -54,11 +54,15 @@
 **Tech stack:**
 - Language: Python 3.12 (plain, minimal dependencies)
 - Database: PostgreSQL 16
-- Deployment: Docker Compose
+- Deployment: Podman + Podman Compose
 - Testing: pytest
+- Linting: ruff
+- Security: bandit
 - Observability: OpenTelemetry SDK (logs, metrics, traces)
   - Phase 1: stdout/JSON (container logs), `/metrics` endpoint
   - Future: OTLP export to external backends (Prometheus, Jaeger, etc.)
+
+Please note - the directory contains app directory. The requirements suggests a better structure (backend / frontend). Use the improved structure. The Makefile and some of the scriptsprovided will have to be adjusted.
 
 **Timeline goal:** 2-3 weeks (5 phases)
 
@@ -1629,7 +1633,7 @@ migrations/
 ```
 
 **Implements:**
-- Docker Compose with PostgreSQL
+- Podman Compose with PostgreSQL
 - Shared infrastructure
 - Entity definitions with validation
 - State machines with transition guards
@@ -1805,7 +1809,7 @@ docs/                 # OpenAPI, architecture
 
 ```
 identity-platform/
-├── docker-compose.yml              # Orchestrates all services
+├── podman-compose.yml              # Orchestrates all services
 ├── README.md
 ├── docs/                           # Shared documentation
 │
@@ -1853,6 +1857,6 @@ identity-platform/
 **Structure Rationale:**
 - `/backend/src` enables future `/frontend` addition without restructuring
 - Each component has its own `Dockerfile` for independent containerization
-- Shared `docker-compose.yml` orchestrates all services
+- Shared `podman-compose.yml` orchestrates all services
 - `docs/` contains shared documentation accessible to all components
 

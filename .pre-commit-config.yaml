@@ -1,31 +1,42 @@
 repos:
+  # Linting and Formatting (Ruff)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.8
     hooks:
       - id: ruff
+        args: ["--fix", "--config", "backend/pyproject.toml"]
+        files: ^backend/src/
       - id: ruff-format
+        args: ["--config", "backend/pyproject.toml"]
+        files: ^backend/src/
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.1
-    hooks:
-      - id: mypy
-        args: ["--config-file", "mypy.ini"]
-
-  - repo: https://github.com/Lucas-C/pre-commit-hooks-bandit
-    rev: v1.0.5
+  # Security (Bandit)
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
     hooks:
       - id: bandit
+        args: ["-r", "backend/src", "-c", "backend/pyproject.toml"]
+        pass_filenames: false
 
+  # Local Hooks (Project specific context)
   - repo: local
     hooks:
-      - id: radon-cc
-        name: radon cc check
-        entry: ./scripts/run_radon.sh
-        language: system
-        types: [python]
-
+      # Pytest (Unit Tests)
       - id: pytest
         name: pytest
-        entry: ./scripts/test.sh
+        entry: .venv/bin/pytest
+        args: ["backend/tests"]
         language: system
         pass_filenames: false
+        types: [python]
+        stages: [pre-commit] # Updated from deprecated 'commit'
+
+      # Radon (Complexity)
+      - id: radon
+        name: radon complexity
+        entry: .venv/bin/radon
+        args: ["cc", "backend/src", "-a", "-nb"]
+        language: system
+        pass_filenames: false
+        types: [python]
+

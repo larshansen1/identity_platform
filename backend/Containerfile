@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies (needed for compilation of some python packages)
+# RUN apt-get update && apt-get install -y gcc libpq-dev && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies
+COPY pyproject.toml .
+# Copy application code
+COPY src/ ./src/
+COPY migrations/ ./migrations/
+# We'll copy alembic.ini later when we create it
+RUN pip install --no-cache-dir .
+
+# Run as non-root user
+RUN useradd -m -u 1000 appuser
+USER appuser
+
+ENV PYTHONPATH=/app/src
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
