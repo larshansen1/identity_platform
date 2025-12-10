@@ -7,16 +7,36 @@ class SubjectType(StrEnum):
 
 
 class MachineClientStatus(StrEnum):
+    """All possible states for MachineClient entity."""
+
     PENDING_CERTIFICATE = "pending_certificate"
     ACTIVE = "active"
-    REVOKED = "revoked"
+    REVOKED = "revoked"  # Terminal state
+
+
+class MachineClientEvent(StrEnum):
+    """All possible events that trigger MachineClient transitions."""
+
+    CERTIFICATE_INSTALLED = "certificate_installed"
+    REVOCATION_REQUESTED = "revocation_requested"
 
 
 class CertificateRequestStatus(StrEnum):
+    """All possible states for CertificateRequest entity."""
+
     PENDING = "pending"
     ISSUED = "issued"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
+    COMPLETED = "completed"  # Terminal state
+    CANCELLED = "cancelled"  # Terminal state
+
+
+class CertificateRequestEvent(StrEnum):
+    """All possible events that trigger CertificateRequest transitions."""
+
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    DOWNLOAD_COMPLETED = "download_completed"
+    CANCELLATION_REQUESTED = "cancellation_requested"
 
 
 class CertificateRequestType(StrEnum):

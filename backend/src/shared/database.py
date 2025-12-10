@@ -28,7 +28,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 @asynccontextmanager
-async def get_db_context():
+async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     """Context manager for getting async session (for background tasks/scripts)."""
     async with AsyncSessionLocal() as session:
         yield session

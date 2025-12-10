@@ -5,7 +5,7 @@ from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExpo
 from opentelemetry.sdk.resources import Resource
 
 
-def setup_metrics(app_name: str):
+def setup_metrics(app_name: str) -> None:
     """Configure OpenTelemetry metrics."""
 
     resource = Resource.create({"service.name": app_name})

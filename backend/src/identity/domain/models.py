@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 from uuid import UUID, uuid4
 
-from shared.database import Base
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -16,6 +15,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from shared.database import Base
+
+if TYPE_CHECKING:
+    from identity.domain.state_machines import (
+        CertificateRequestStateMachine,
+        MachineClientStateMachine,
+    )
+
 from .states import (
     AdminRole,
     CertificateRequestStatus,
@@ -24,7 +31,7 @@ from .states import (
 )
 
 
-def utc_now():
+def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
@@ -132,22 +139,30 @@ class MachineClient(Subject):
             return False
         return self.certificate_not_after < utc_now()
 
+    @property
+    def state_machine(self) -> "MachineClientStateMachine":
+        """Get state machine for this entity."""
+        from identity.domain.state_machines import MachineClientStateMachine
+
+        return MachineClientStateMachine(self)
+
     def install_certificate(
         self, thumbprint: str, serial: str, not_before: datetime, not_after: datetime
-    ):
-        if self.status == MachineClientStatus.REVOKED:
-            raise ValueError("Cannot modify revoked client")
+    ) -> "MachineClientStatus":
+        """Install certificate via state machine.
 
-        self.certificate_thumbprint = thumbprint
-        self.certificate_serial = serial
-        self.certificate_not_before = not_before
-        self.certificate_not_after = not_after
+        Raises:
+            InvalidTransitionError: If client is REVOKED (INV-04)
+        """
+        return self.state_machine.install_certificate(thumbprint, serial, not_before, not_after)
 
-        if self.status == MachineClientStatus.PENDING_CERTIFICATE:
-            self.status = MachineClientStatus.ACTIVE.value
+    def revoke(self) -> "MachineClientStatus":
+        """Revoke client via state machine.
 
-    def revoke(self):
-        self.status = MachineClientStatus.REVOKED.value
+        Raises:
+            InvalidTransitionError: If already REVOKED
+        """
+        return self.state_machine.revoke()
 
 
 class CertificateRequest(Base):
@@ -205,36 +220,45 @@ class CertificateRequest(Base):
         "AdminUser", foreign_keys=[approver_id], back_populates="approved_certs"
     )
 
-    def approve(self, approver_id: UUID, cert_pem: str, key_pem: str):
-        if self.status != CertificateRequestStatus.PENDING:
-            raise ValueError(f"Cannot approve request in state {self.status}")
+    @property
+    def state_machine(self) -> "CertificateRequestStateMachine":
+        """Get state machine for this entity."""
+        from identity.domain.state_machines import CertificateRequestStateMachine
 
-        self.approver_id = approver_id
-        self.status = CertificateRequestStatus.ISSUED.value
-        self.certificate_pem = cert_pem
-        self.private_key_pem_encrypted = key_pem
-        self.decided_at = utc_now()
+        return CertificateRequestStateMachine(self)
 
-    def reject(self, approver_id: UUID, reason: str):
-        if self.status != CertificateRequestStatus.PENDING:
-            raise ValueError(f"Cannot reject request in state {self.status}")
-        if not reason:
-            raise ValueError("Rejection reason is required")
+    def approve(self, approver_id: UUID, cert_pem: str, key_pem: str) -> "CertificateRequestStatus":
+        """Approve request via state machine.
 
-        self.approver_id = approver_id
-        self.status = CertificateRequestStatus.CANCELLED.value
-        self.rejection_reason = reason
-        self.decided_at = utc_now()
+        Raises:
+            InvalidTransitionError: If not in PENDING state
+        """
+        return self.state_machine.approve(approver_id, cert_pem, key_pem)
 
-    def complete_download(self):
-        if self.status != CertificateRequestStatus.ISSUED:
-            raise ValueError(f"Cannot complete download in state {self.status}")
-        self.status = CertificateRequestStatus.COMPLETED.value
+    def reject(self, approver_id: UUID, reason: str) -> "CertificateRequestStatus":
+        """Reject request via state machine.
 
-    def cancel(self):
-        if self.status in [CertificateRequestStatus.COMPLETED, CertificateRequestStatus.CANCELLED]:
-            raise ValueError(f"Cannot cancel request in terminal state {self.status}")
-        self.status = CertificateRequestStatus.CANCELLED.value
+        Raises:
+            InvalidTransitionError: If not in PENDING state
+            ValueError: If reason is empty (INV-07)
+        """
+        return self.state_machine.reject(approver_id, reason)
+
+    def complete_download(self) -> "CertificateRequestStatus":
+        """Mark as downloaded via state machine.
+
+        Raises:
+            InvalidTransitionError: If not in ISSUED state
+        """
+        return self.state_machine.complete_download()
+
+    def cancel(self) -> "CertificateRequestStatus":
+        """Cancel request via state machine.
+
+        Raises:
+            InvalidTransitionError: If in terminal state
+        """
+        return self.state_machine.cancel()
 
 
 class IssuedCertificate(Base):
@@ -277,6 +301,6 @@ class IdentityAuditLog(Base):
     resource_type: Mapped[str] = mapped_column(String(100), nullable=False)
     resource_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
-    details: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    details: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

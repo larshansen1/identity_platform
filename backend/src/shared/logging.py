@@ -8,7 +8,7 @@ from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRe
 from .config import settings
 
 
-def setup_logging():
+def setup_logging() -> None:
     """Configure OpenTelemetry logging with Console exporter for Phase 1."""
 
     # 1. Setup OpenTelemetry Logger Provider

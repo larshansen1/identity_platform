@@ -6,10 +6,24 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Import models to register them with Base.metadata
 # Application Imports
 from shared.config import settings
 from shared.database import Base
+
+# Import ALL models to register them with Base.metadata
+# This is required for alembic autogenerate to detect table changes
+from identity.domain.models import (  # noqa: F401
+    AdminUser,
+    CertificateRequest,
+    IdentityAuditLog,
+    IssuedCertificate,
+    MachineClient,
+    Subject,
+)
+from authz.domain.models import (  # noqa: F401
+    AuthzAuditLog,
+    TokenSigningKey,
+)
 
 config = context.config
 

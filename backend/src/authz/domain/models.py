@@ -1,16 +1,17 @@
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from shared.database import Base
 from sqlalchemy import Boolean, DateTime, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from shared.database import Base
 
-def utc_now():
+
+def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
@@ -44,6 +45,6 @@ class AuthzAuditLog(Base):
     actor_type: Mapped[str] = mapped_column(String(50), nullable=False)
     actor_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
-    details: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    details: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
