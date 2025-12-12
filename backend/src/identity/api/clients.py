@@ -3,6 +3,8 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
+from shared.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from identity.api.auth import require_role
@@ -11,17 +13,34 @@ from identity.api.schemas import (
     ClientResponse,
     CreateClientRequest,
 )
+from identity.ca.key_manager import KeyManager
 from identity.domain.models import AdminUser
 from identity.domain.states import AdminRole, MachineClientStatus
+from identity.services.certificate_service import CertificateService, DownloadExpiredError
 from identity.services.client_service import (
     ClientService,
     ConflictError,
     NotFoundError,
     RequestContext,
 )
-from shared.database import get_db
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
+
+# Global key manager instance (shared with approvals module)
+_key_manager: KeyManager | None = None
+
+
+def set_key_manager(km: KeyManager) -> None:
+    """Set the global key manager instance."""
+    global _key_manager
+    _key_manager = km
+
+
+def get_key_manager() -> KeyManager:
+    """Get the global key manager instance."""
+    if _key_manager is None:
+        raise RuntimeError("KeyManager not initialized")
+    return _key_manager
 
 
 def get_request_context(request: Request) -> RequestContext:
@@ -35,6 +54,42 @@ def get_request_context(request: Request) -> RequestContext:
 def get_client_service(db: AsyncSession = Depends(get_db)) -> ClientService:
     """Dependency to get ClientService instance."""
     return ClientService(db)
+
+
+def get_certificate_service(db: AsyncSession = Depends(get_db)) -> CertificateService:
+    """Dependency to get CertificateService instance."""
+    return CertificateService(db, get_key_manager())
+
+
+# =============================================================================
+# Request/Response Schemas for Certificate Requests
+# =============================================================================
+
+
+class CertificateRequestResponse(BaseModel):
+    """Response for a certificate request."""
+
+    request_id: str
+    subject_id: str
+    request_type: str
+    status: str
+    created_at: str
+    expires_at: str
+    download_expires_at: str | None = None
+
+
+class CertificateBundleResponse(BaseModel):
+    """Response containing the certificate bundle for download."""
+
+    certificate_pem: str
+    private_key_pem: str
+    ca_certificate_pem: str
+    subject_id: str
+
+
+# =============================================================================
+# Client CRUD Endpoints
+# =============================================================================
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=ClientResponse)
@@ -143,3 +198,132 @@ async def delete_client(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         ) from None
+
+
+# =============================================================================
+# Certificate Request Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/{subject_id}/certificate-requests",
+    status_code=status.HTTP_201_CREATED,
+    response_model=CertificateRequestResponse,
+)
+async def create_certificate_request(
+    request: Request,
+    subject_id: UUID,
+    admin: AdminUser = Depends(require_role(AdminRole.REQUESTER)),
+    service: ClientService = Depends(get_client_service),
+) -> CertificateRequestResponse:
+    """
+    Create a certificate request for a machine client.
+
+    - Auth: API key with REQUESTER role
+    - Constraint: Only if admin is owner (INV-13)
+    - Constraint: Client cannot be REVOKED
+    - Constraint: No pending request can exist (INV-05)
+    """
+    context = get_request_context(request)
+    try:
+        cert_request = await service.create_certificate_request(
+            owner=admin,
+            subject_id=subject_id,
+            request_context=context,
+        )
+        return CertificateRequestResponse(
+            request_id=str(cert_request.request_id),
+            subject_id=str(cert_request.client_id),
+            request_type=cert_request.request_type,
+            status=cert_request.status,
+            created_at=cert_request.created_at.isoformat(),
+            expires_at=cert_request.expires_at.isoformat(),
+            download_expires_at=(
+                cert_request.download_expires_at.isoformat()
+                if cert_request.download_expires_at
+                else None
+            ),
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+    except ConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+
+
+@router.get(
+    "/{subject_id}/certificate-requests/{request_id}",
+    response_model=CertificateRequestResponse,
+)
+async def get_certificate_request(
+    subject_id: UUID,
+    request_id: UUID,
+    admin: AdminUser = Depends(require_role(AdminRole.REQUESTER)),
+    service: ClientService = Depends(get_client_service),
+) -> CertificateRequestResponse:
+    """
+    Get a certificate request.
+
+    - Auth: API key with REQUESTER role
+    - Constraint: Only if admin is owner (INV-13)
+    """
+    try:
+        cert_request = await service.get_certificate_request(
+            owner=admin,
+            client_id=subject_id,
+            request_id=request_id,
+        )
+        return CertificateRequestResponse(
+            request_id=str(cert_request.request_id),
+            subject_id=str(cert_request.client_id),
+            request_type=cert_request.request_type,
+            status=cert_request.status,
+            created_at=cert_request.created_at.isoformat(),
+            expires_at=cert_request.expires_at.isoformat(),
+            download_expires_at=(
+                cert_request.download_expires_at.isoformat()
+                if cert_request.download_expires_at
+                else None
+            ),
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+
+
+@router.get(
+    "/{subject_id}/certificate-requests/{request_id}/download",
+    response_model=CertificateBundleResponse,
+)
+async def download_certificate(
+    request: Request,
+    subject_id: UUID,
+    request_id: UUID,
+    admin: AdminUser = Depends(require_role(AdminRole.REQUESTER)),
+    cert_service: CertificateService = Depends(get_certificate_service),
+) -> CertificateBundleResponse:
+    """
+    Download a certificate bundle.
+
+    - Auth: API key with REQUESTER role
+    - Constraint: Only if admin is owner (INV-13)
+    - Constraint: Request must be in ISSUED status
+    - Constraint: Download window must not be expired
+    """
+    context = get_request_context(request)
+    try:
+        cert_request, client = await cert_service.get_request_for_download(
+            request_id=request_id,
+            client_id=subject_id,
+            owner_id=admin.user_id,
+        )
+        bundle = await cert_service.download_certificate(
+            request=cert_request,
+            client=client,
+            request_context=context,
+        )
+        return CertificateBundleResponse(**bundle)
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+    except ConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except DownloadExpiredError as e:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(e)) from None

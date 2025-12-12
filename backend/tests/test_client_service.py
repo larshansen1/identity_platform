@@ -218,19 +218,33 @@ class TestClientServiceDelete:
         with (
             patch("identity.services.client_service.MachineClientRepository") as MockRepo,
             patch("identity.services.client_service.AuditLogRepository") as MockAuditRepo,
+            patch(
+                "identity.services.client_service.CertificateRequestRepository"
+            ) as MockRequestRepo,
+            patch("identity.services.client_service.IssuedCertificateRepository") as MockCertRepo,
             patch("identity.services.client_service.identity_metrics"),
         ):
             mock_db = AsyncMock()
             mock_repo = AsyncMock()
             mock_audit_repo = AsyncMock()
+            mock_request_repo = AsyncMock()
+            mock_cert_repo = AsyncMock()
             mock_repo.get_by_id.return_value = client
+
+            # Configure new repos
+            mock_request_repo.cancel_pending_for_client.return_value = 0
+            mock_cert_repo.revoke_all_for_client.return_value = 0
 
             MockRepo.return_value = mock_repo
             MockAuditRepo.return_value = mock_audit_repo
+            MockRequestRepo.return_value = mock_request_repo
+            MockCertRepo.return_value = mock_cert_repo
 
             service = ClientService(mock_db)
             service.client_repo = mock_repo
             service.audit_repo = mock_audit_repo
+            service.request_repo = mock_request_repo
+            service.cert_repo = mock_cert_repo
 
             await service.delete_machine_client(
                 owner=admin,

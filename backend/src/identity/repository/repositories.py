@@ -1,17 +1,21 @@
 """Repository layer for Identity module data access."""
 
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from identity.domain.models import (
     AdminUser,
+    CertificateRequest,
     IdentityAuditLog,
+    IssuedCertificate,
     MachineClient,
 )
-from identity.domain.states import AdminRole, MachineClientStatus
+from identity.domain.states import AdminRole, CertificateRequestStatus, MachineClientStatus
 
 logger = logging.getLogger(__name__)
 
@@ -143,3 +147,186 @@ class AuditLogRepository:
         """
         self.db.add(event)
         await self.db.flush()
+
+
+# ============================================================================
+# Phase 3: Certificate Request and Issued Certificate Repositories
+# ============================================================================
+
+
+class CertificateRequestRepository:
+    """Repository for CertificateRequest CRUD operations."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create(self, request: CertificateRequest) -> CertificateRequest:
+        """Create a new certificate request."""
+        self.db.add(request)
+        await self.db.flush()
+        return request
+
+    async def get_by_id(self, request_id: UUID) -> CertificateRequest | None:
+        """Get request by ID (for approvers - any owner)."""
+        result = await self.db.execute(
+            select(CertificateRequest)
+            .options(joinedload(CertificateRequest.client).joinedload(MachineClient.owner))
+            .where(CertificateRequest.request_id == request_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id_for_requester(
+        self, request_id: UUID, requester_id: UUID
+    ) -> CertificateRequest | None:
+        """Get request only if owned by requester."""
+        result = await self.db.execute(
+            select(CertificateRequest)
+            .options(joinedload(CertificateRequest.client))
+            .where(CertificateRequest.request_id == request_id)
+            .where(CertificateRequest.requester_id == requester_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id_for_client_owner(
+        self, request_id: UUID, client_id: UUID, owner_id: UUID
+    ) -> CertificateRequest | None:
+        """Get request for a client owned by owner."""
+        result = await self.db.execute(
+            select(CertificateRequest)
+            .join(MachineClient, CertificateRequest.client_id == MachineClient.subject_id)
+            .where(CertificateRequest.request_id == request_id)
+            .where(CertificateRequest.client_id == client_id)
+            .where(MachineClient.owner_id == owner_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_pending(
+        self, limit: int = 20, offset: int = 0
+    ) -> tuple[list[CertificateRequest], int]:
+        """List pending requests for approvers with client/owner info."""
+        base_query = (
+            select(CertificateRequest)
+            .options(joinedload(CertificateRequest.client).joinedload(MachineClient.owner))
+            .where(CertificateRequest.status == CertificateRequestStatus.PENDING.value)
+        )
+
+        # Get total count
+        count_query = (
+            select(func.count())
+            .select_from(CertificateRequest)
+            .where(CertificateRequest.status == CertificateRequestStatus.PENDING.value)
+        )
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar_one()
+
+        # Get paginated results
+        query = base_query.order_by(CertificateRequest.created_at.asc()).offset(offset).limit(limit)
+        result = await self.db.execute(query)
+        requests = list(result.scalars().unique().all())
+
+        return requests, total
+
+    async def list_by_client(self, client_id: UUID) -> list[CertificateRequest]:
+        """List all requests for a specific client."""
+        result = await self.db.execute(
+            select(CertificateRequest)
+            .where(CertificateRequest.client_id == client_id)
+            .order_by(CertificateRequest.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def has_pending_request(self, client_id: UUID) -> bool:
+        """Check if client has a pending request (for INV-05)."""
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(CertificateRequest)
+            .where(CertificateRequest.client_id == client_id)
+            .where(CertificateRequest.status == CertificateRequestStatus.PENDING.value)
+        )
+        count = result.scalar_one()
+        return count > 0
+
+    async def update(self, request: CertificateRequest) -> CertificateRequest:
+        """Update an existing certificate request."""
+        await self.db.flush()
+        return request
+
+    async def cancel_pending_for_client(self, client_id: UUID) -> int:
+        """Cancel all pending requests for a client (for client deletion)."""
+        result = await self.db.execute(
+            update(CertificateRequest)
+            .where(CertificateRequest.client_id == client_id)
+            .where(CertificateRequest.status == CertificateRequestStatus.PENDING.value)
+            .values(status=CertificateRequestStatus.CANCELLED.value)
+            .returning(CertificateRequest.request_id)
+        )
+        cancelled_ids = list(result.scalars().all())
+        return len(cancelled_ids)
+
+
+class IssuedCertificateRepository:
+    """Repository for IssuedCertificate tracking and revocation."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create(self, cert: IssuedCertificate) -> IssuedCertificate:
+        """Create a new issued certificate record."""
+        self.db.add(cert)
+        await self.db.flush()
+        return cert
+
+    async def get_by_serial(self, serial: str) -> IssuedCertificate | None:
+        """Get certificate by serial number."""
+        result = await self.db.execute(
+            select(IssuedCertificate).where(IssuedCertificate.serial_number == serial)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_thumbprint(self, thumbprint: str) -> IssuedCertificate | None:
+        """Get certificate by thumbprint."""
+        result = await self.db.execute(
+            select(IssuedCertificate).where(IssuedCertificate.thumbprint == thumbprint)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_active_by_client(self, client_id: UUID) -> IssuedCertificate | None:
+        """Get current active (non-revoked) certificate for a client."""
+        result = await self.db.execute(
+            select(IssuedCertificate)
+            .where(IssuedCertificate.client_id == client_id)
+            .where(IssuedCertificate.revoked_at.is_(None))
+            .order_by(IssuedCertificate.issued_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def revoke(self, certificate_id: UUID, reason: str) -> None:
+        """Revoke a certificate by ID."""
+        await self.db.execute(
+            update(IssuedCertificate)
+            .where(IssuedCertificate.certificate_id == certificate_id)
+            .values(revoked_at=datetime.now(timezone.utc), revocation_reason=reason)
+        )
+
+    async def revoke_all_for_client(self, client_id: UUID, reason: str) -> int:
+        """Revoke all certificates for a client (for client deletion)."""
+        result = await self.db.execute(
+            update(IssuedCertificate)
+            .where(IssuedCertificate.client_id == client_id)
+            .where(IssuedCertificate.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(timezone.utc), revocation_reason=reason)
+            .returning(IssuedCertificate.certificate_id)
+        )
+        revoked_ids = list(result.scalars().all())
+        return len(revoked_ids)
+
+    async def is_revoked(self, serial: str) -> bool:
+        """Check if a certificate is revoked by serial number."""
+        result = await self.db.execute(
+            select(IssuedCertificate.revoked_at).where(IssuedCertificate.serial_number == serial)
+        )
+        cert = result.scalar_one_or_none()
+        if cert is None:
+            return False  # Certificate not found - let caller handle
+        return cert is not None  # revoked_at is set
