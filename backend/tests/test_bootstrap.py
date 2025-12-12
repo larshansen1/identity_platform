@@ -64,6 +64,7 @@ class TestBootstrap:
             mock_settings.BOOTSTRAP_ADMIN_EMAIL = "admin@example.com"
             mock_settings.BOOTSTRAP_ADMIN_NAME = "Admin User"
             mock_settings.BOOTSTRAP_ADMIN_ROLES = "requester,approver"
+            mock_settings.BOOTSTRAP_APPROVER_EMAIL = None  # No second admin
 
             mock_gen_key.return_value = "idp_test_key_12345"
             mock_hash_key.return_value = "$argon2id$..."
@@ -71,7 +72,7 @@ class TestBootstrap:
             result = await bootstrap_admin_if_needed(mock_db)
 
             assert result == "idp_test_key_12345"
-            mock_repo.create.assert_called_once()
+            mock_repo.create.assert_called_once()  # Only primary admin
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -93,6 +94,7 @@ class TestBootstrap:
             mock_settings.BOOTSTRAP_ADMIN_EMAIL = "admin@example.com"
             mock_settings.BOOTSTRAP_ADMIN_NAME = "Admin User"
             mock_settings.BOOTSTRAP_ADMIN_ROLES = "requester,approver"
+            mock_settings.BOOTSTRAP_APPROVER_EMAIL = None  # No second admin
 
             mock_gen_key.return_value = "idp_test_key"
             mock_hash_key.return_value = "$argon2id$..."
@@ -123,6 +125,7 @@ class TestBootstrap:
             mock_settings.BOOTSTRAP_ADMIN_EMAIL = "admin@example.com"
             mock_settings.BOOTSTRAP_ADMIN_NAME = None  # Should default to email
             mock_settings.BOOTSTRAP_ADMIN_ROLES = "requester"
+            mock_settings.BOOTSTRAP_APPROVER_EMAIL = None  # No second admin
 
             expected_key = "idp_unique_key_abc123"
             mock_gen_key.return_value = expected_key
@@ -150,6 +153,7 @@ class TestBootstrap:
             mock_settings.BOOTSTRAP_ADMIN_EMAIL = "admin@example.com"
             mock_settings.BOOTSTRAP_ADMIN_NAME = None  # Not provided
             mock_settings.BOOTSTRAP_ADMIN_ROLES = "requester"
+            mock_settings.BOOTSTRAP_APPROVER_EMAIL = None  # No second admin
 
             mock_gen_key.return_value = "idp_test"
 

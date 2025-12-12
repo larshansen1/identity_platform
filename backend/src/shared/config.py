@@ -22,5 +22,9 @@ class Settings(BaseSettings):
     BOOTSTRAP_ADMIN_NAME: Optional[str] = None
     BOOTSTRAP_ADMIN_ROLES: str = "REQUESTER,APPROVER"
 
+    # Bootstrap Approver (Optional - second admin for testing approval workflows)
+    BOOTSTRAP_APPROVER_EMAIL: Optional[str] = None
+    BOOTSTRAP_APPROVER_NAME: Optional[str] = None
+
 
 settings = Settings()
